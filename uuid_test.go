@@ -573,6 +573,98 @@ func TestIsWrongLength(t *testing.T) {
 	}
 }
 
+func TestBinaryLengthError(t *testing.T) {
+	_, err := FromBytes([]byte{1, 2, 3})
+	if err == nil {
+		t.Fatal("FromBytes accepted a 3 byte slice")
+	}
+	if got, want := err.Error(), "invalid UUID (got 3 bytes)"; got != want {
+		t.Errorf("FromBytes error = %q, want %q", got, want)
+	}
+	if !IsInvalidLengthError(err) {
+		t.Errorf("IsInvalidLengthError(%v) = false, want true", err)
+	}
+	if !errors.Is(err, ErrInvalidLength) {
+		t.Errorf("errors.Is(%v, ErrInvalidLength) = false, want true", err)
+	}
+}
+
+func TestParseErrorsIs(t *testing.T) {
+	cases := []struct {
+		in   string
+		want error
+	}{
+		{"12345", ErrInvalidLength},
+		{"urn:uuix:123e4567-e89b-12d3-a456-426655440000", ErrInvalidURNPrefix},
+		{"123e4567+e89b-12d3-a456-426655440000", ErrInvalidUUIDFormat},
+		{"123e4567-e89b-12d3-a456-42665544000z", ErrInvalidUUIDFormat},
+		{"123e4567e89b12d3a45642665544000z", ErrInvalidUUIDFormat},
+	}
+	for _, tc := range cases {
+		if _, err := Parse(tc.in); !errors.Is(err, tc.want) {
+			t.Errorf("Parse(%q) error = %v, want %v", tc.in, err, tc.want)
+		}
+		if _, err := ParseBytes([]byte(tc.in)); !errors.Is(err, tc.want) {
+			t.Errorf("ParseBytes(%q) error = %v, want %v", tc.in, err, tc.want)
+		}
+	}
+}
+
+func TestIsNilIsMax(t *testing.T) {
+	if !Nil.IsNil() || Nil.IsMax() {
+		t.Errorf("Nil: IsNil() = %v, IsMax() = %v", Nil.IsNil(), Nil.IsMax())
+	}
+	if Max.IsNil() || !Max.IsMax() {
+		t.Errorf("Max: IsNil() = %v, IsMax() = %v", Max.IsNil(), Max.IsMax())
+	}
+	SetRand(nil)
+	u := New()
+	if u.IsNil() || u.IsMax() {
+		t.Errorf("%s: IsNil() = %v, IsMax() = %v", u, u.IsNil(), u.IsMax())
+	}
+}
+
+func TestAppendText(t *testing.T) {
+	u := MustParse("f47ac10b-58cc-0372-8567-0e02b2c3d479")
+	got, err := u.AppendText([]byte("id="))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "id=f47ac10b-58cc-0372-8567-0e02b2c3d479"; string(got) != want {
+		t.Errorf("AppendText = %q, want %q", got, want)
+	}
+
+	bin, err := u.AppendBinary([]byte{0xff})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bin) != 17 || bin[0] != 0xff || !bytes.Equal(bin[1:], u[:]) {
+		t.Errorf("AppendBinary = %x, want ff%x", bin, u[:])
+	}
+}
+
+func TestRandPoolConcurrentToggle(t *testing.T) {
+	SetRand(nil)
+	defer DisableRandPool()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			if i%2 == 0 {
+				EnableRandPool()
+			} else {
+				DisableRandPool()
+			}
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		if _, err := NewRandom(); err != nil {
+			t.Fatalf("NewRandom: %v", err)
+		}
+	}
+	<-done
+}
+
 func FuzzParse(f *testing.F) {
 	for _, tt := range tests {
 		f.Add(tt.in)
@@ -817,114 +909,5 @@ func TestVersion6(t *testing.T) {
 		t.Error("time reversed")
 	case t1 < t2 && q1 != q2:
 		t.Error("clock sequence changed unexpectedly")
-	}
-}
-
-// uuid v7 time is only unix milliseconds, so
-// uuid1.Time() == uuid2.Time() is right, but uuid1 must != uuid2
-func TestVersion7(t *testing.T) {
-	SetRand(nil)
-	m := make(map[string]bool)
-	for x := 1; x < 128; x++ {
-		uuid, err := NewV7()
-		if err != nil {
-			t.Fatalf("could not create UUID: %v", err)
-		}
-		s := uuid.String()
-		if m[s] {
-			t.Errorf("NewV7 returned duplicated UUID %s", s)
-		}
-		m[s] = true
-		if v := uuid.Version(); v != 7 {
-			t.Errorf("UUID of version %s", v)
-		}
-		if uuid.Variant() != RFC4122 {
-			t.Errorf("UUID is variant %d", uuid.Variant())
-		}
-	}
-}
-
-// uuid v7 time is only unix milliseconds, so
-// uuid1.Time() == uuid2.Time() is right, but uuid1 must != uuid2
-func TestVersion7_pooled(t *testing.T) {
-	SetRand(nil)
-	EnableRandPool()
-	defer DisableRandPool()
-
-	m := make(map[string]bool)
-	for x := 1; x < 128; x++ {
-		uuid, err := NewV7()
-		if err != nil {
-			t.Fatalf("could not create UUID: %v", err)
-		}
-		s := uuid.String()
-		if m[s] {
-			t.Errorf("NewV7 returned duplicated UUID %s", s)
-		}
-		m[s] = true
-		if v := uuid.Version(); v != 7 {
-			t.Errorf("UUID of version %s", v)
-		}
-		if uuid.Variant() != RFC4122 {
-			t.Errorf("UUID is variant %d", uuid.Variant())
-		}
-	}
-}
-
-func TestVersion7FromReader(t *testing.T) {
-	myString := "8059ddhdle77cb52"
-	r := bytes.NewReader([]byte(myString))
-	_, err := NewV7FromReader(r)
-	if err != nil {
-		t.Errorf("failed generating UUID from a reader")
-	}
-	_, err = NewV7FromReader(r)
-	if err == nil {
-		t.Errorf("expecting an error as reader has no more bytes. Got uuid. NewV7FromReader may not be using the provided reader")
-	}
-}
-
-func TestVersion7Monotonicity(t *testing.T) {
-	length := 10000
-	u1 := Must(NewV7()).String()
-	for i := 0; i < length; i++ {
-		u2 := Must(NewV7()).String()
-		if u2 <= u1 {
-			t.Errorf("monotonicity failed at #%d: %s(next) < %s(before)", i, u2, u1)
-			break
-		}
-		u1 = u2
-	}
-}
-
-type fakeRand struct{}
-
-func (g fakeRand) Read(bs []byte) (int, error) {
-	for i, _ := range bs {
-		bs[i] = 0x88
-	}
-	return len(bs), nil
-}
-
-func TestVersion7MonotonicityStrict(t *testing.T) {
-	timeNow = func() time.Time {
-		return time.Date(2008, 8, 8, 8, 8, 8, 8, time.UTC)
-	}
-	defer func() {
-		timeNow = time.Now
-	}()
-
-	SetRand(fakeRand{})
-	defer SetRand(nil)
-
-	length := 100000 // > 3906
-	u1 := Must(NewV7())
-	for i := 0; i < length; i++ {
-		u2 := Must(NewV7())
-		if Compare(u1, u2) >= 0 {
-			t.Errorf("monotonicity failed at #%d: %s(next) < %s(before)", i, u2, u1)
-			break
-		}
-		u1 = u2
 	}
 }

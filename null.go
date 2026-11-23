@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
-	"fmt"
 )
 
 var jsonNull = []byte("null")
@@ -17,22 +16,21 @@ var jsonNull = []byte("null")
 // NullUUID implements the SQL driver.Scanner interface so
 // it can be used as a scan destination:
 //
-//  var u uuid.NullUUID
-//  err := db.QueryRow("SELECT name FROM foo WHERE id=?", id).Scan(&u)
-//  ...
-//  if u.Valid {
-//     // use u.UUID
-//  } else {
-//     // NULL value
-//  }
-//
+//	var u uuid.NullUUID
+//	err := db.QueryRow("SELECT name FROM foo WHERE id=?", id).Scan(&u)
+//	...
+//	if u.Valid {
+//	   // use u.UUID
+//	} else {
+//	   // NULL value
+//	}
 type NullUUID struct {
 	UUID  UUID
 	Valid bool // Valid is true if UUID is not NULL
 }
 
 // Scan implements the SQL driver.Scanner interface.
-func (nu *NullUUID) Scan(value interface{}) error {
+func (nu *NullUUID) Scan(value any) error {
 	if value == nil {
 		nu.UUID, nu.Valid = Nil, false
 		return nil
@@ -67,9 +65,15 @@ func (nu NullUUID) MarshalBinary() ([]byte, error) {
 }
 
 // UnmarshalBinary implements encoding.BinaryUnmarshaler.
+// A zero length input decodes to an invalid NullUUID, which mirrors
+// MarshalBinary.
 func (nu *NullUUID) UnmarshalBinary(data []byte) error {
+	if len(data) == 0 {
+		*nu = NullUUID{}
+		return nil
+	}
 	if len(data) != 16 {
-		return fmt.Errorf("invalid UUID (got %d bytes)", len(data))
+		return invalidBinaryLengthError{len(data)}
 	}
 	copy(nu.UUID[:], data)
 	nu.Valid = true
@@ -86,7 +90,12 @@ func (nu NullUUID) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
+// The text "null" decodes to an invalid NullUUID, which mirrors MarshalText.
 func (nu *NullUUID) UnmarshalText(data []byte) error {
+	if bytes.Equal(data, jsonNull) {
+		*nu = NullUUID{}
+		return nil
+	}
 	id, err := ParseBytes(data)
 	if err != nil {
 		nu.Valid = false

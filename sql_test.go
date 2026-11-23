@@ -5,6 +5,7 @@
 package uuid
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -109,5 +110,22 @@ func TestValue(t *testing.T) {
 	val, _ := uuid.Value()
 	if val != stringTest {
 		t.Error("Value() did not return expected string")
+	}
+}
+
+func TestScanWrapsParseError(t *testing.T) {
+	var uuid UUID
+	err := uuid.Scan("f47ac10b-58cc-0372-8567-0e02b2c3d4")
+	if !errors.Is(err, ErrInvalidLength) {
+		t.Errorf("Scan(short string) error = %v, want it to wrap ErrInvalidLength", err)
+	}
+	err = uuid.Scan("urn:uuix:f47ac10b-58cc-0372-8567-0e02b2c3d479")
+	if !errors.Is(err, ErrInvalidURNPrefix) {
+		t.Errorf("Scan(bad urn) error = %v, want it to wrap ErrInvalidURNPrefix", err)
+	}
+	var nu NullUUID
+	err = nu.Scan("not-a-uuid")
+	if !IsInvalidLengthError(err) || nu.Valid {
+		t.Errorf("NullUUID.Scan(bad) = %v, Valid = %v", err, nu.Valid)
 	}
 }

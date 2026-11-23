@@ -6,13 +6,9 @@ package uuid
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"io"
 	"strings"
-	"sync"
 )
 
 // A UUID is a 128 bit (16 byte) Universal Unique IDentifier as defined in RFC
@@ -39,50 +35,6 @@ const (
 // we still use RFC4122 for constant name.
 const Standard = RFC4122
 
-const randPoolSize = 16 * 16
-
-var (
-	rander      = rand.Reader // random function
-	poolEnabled = false
-	poolMu      sync.Mutex
-	poolPos     = randPoolSize     // protected with poolMu
-	pool        [randPoolSize]byte // protected with poolMu
-
-	ErrInvalidUUIDFormat      = errors.New("invalid UUID format")
-	ErrInvalidBracketedFormat = errors.New("invalid bracketed UUID format")
-)
-
-type URNPrefixError struct { prefix string }
-
-func (e URNPrefixError) Error() string {
-	return fmt.Sprintf("invalid urn prefix: %q", e.prefix)
-}
-
-func (e URNPrefixError) Is(target error) bool {
-	_, ok := target.(URNPrefixError)
-	return ok
-}
-
-var ErrInvalidURNPrefix = URNPrefixError{}
-
-type invalidLengthError struct{ len int }
-
-func (err invalidLengthError) Error() string {
-	return fmt.Sprintf("invalid UUID length: %d", err.len)
-}
-
-func (e invalidLengthError) Is(target error) bool {
-	_, ok := target.(invalidLengthError)
-	return ok
-}
-
-var ErrInvalidLength = invalidLengthError{}
-
-// IsInvalidLengthError is matcher function for custom error invalidLengthError
-func IsInvalidLengthError(err error) bool {
-	return errors.Is(err, ErrInvalidLength)
-}
-
 // Parse decodes s into a UUID or returns an error if it cannot be parsed.  Both
 // the standard UUID forms defined in RFC 9562
 // (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx and
@@ -93,7 +45,6 @@ func IsInvalidLengthError(err error) bool {
 // examined in the latter case.  Parse should not be used to validate strings as
 // it parses non-standard encodings as indicated above.
 func Parse(s string) (UUID, error) {
-	var uuid UUID
 	switch len(s) {
 	// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 	case 36:
@@ -101,7 +52,7 @@ func Parse(s string) (UUID, error) {
 	// urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 	case 36 + 9:
 		if !strings.EqualFold(s[:9], "urn:uuid:") {
-			return uuid, URNPrefixError{s[:9]}
+			return Nil, URNPrefixError{s[:9]}
 		}
 		s = s[9:]
 
@@ -111,82 +62,31 @@ func Parse(s string) (UUID, error) {
 
 	// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 	case 32:
-		var ok bool
-		for i := range uuid {
-			uuid[i], ok = xtob(s[i*2], s[i*2+1])
-			if !ok {
-				return uuid, ErrInvalidUUIDFormat
-			}
-		}
-		return uuid, nil
-	default:
-		return uuid, invalidLengthError{len(s)}
-	}
-	// s is now at least 36 bytes long
-	// it must be of the form  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
-		return uuid, ErrInvalidUUIDFormat
+		return decodeRawHex(s)
 
+	default:
+		return Nil, invalidLengthError{len(s)}
 	}
-	for i, x := range [16]int{
-		0, 2, 4, 6,
-		9, 11,
-		14, 16,
-		19, 21,
-		24, 26, 28, 30, 32, 34,
-	} {
-		v, ok := xtob(s[x], s[x+1])
-		if !ok {
-			return uuid, ErrInvalidUUIDFormat
-		}
-		uuid[i] = v
-	}
-	return uuid, nil
+	return decodeHyphenated(s)
 }
 
 // ParseBytes is like Parse, except it parses a byte slice instead of a string.
 func ParseBytes(b []byte) (UUID, error) {
-	var uuid UUID
 	switch len(b) {
 	case 36: // xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 	case 36 + 9: // urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 		if !bytes.EqualFold(b[:9], []byte("urn:uuid:")) {
-			return uuid, URNPrefixError{string(b[:9])}
+			return Nil, URNPrefixError{string(b[:9])}
 		}
 		b = b[9:]
 	case 36 + 2: // {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
 		b = b[1:]
 	case 32: // xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-		var ok bool
-		for i := 0; i < 32; i += 2 {
-			uuid[i/2], ok = xtob(b[i], b[i+1])
-			if !ok {
-				return uuid, ErrInvalidUUIDFormat
-			}
-		}
-		return uuid, nil
+		return decodeRawHex(b)
 	default:
-		return uuid, invalidLengthError{len(b)}
+		return Nil, invalidLengthError{len(b)}
 	}
-	// s is now at least 36 bytes long
-	// it must be of the form  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	if b[8] != '-' || b[13] != '-' || b[18] != '-' || b[23] != '-' {
-		return uuid, ErrInvalidUUIDFormat
-	}
-	for i, x := range [16]int{
-		0, 2, 4, 6,
-		9, 11,
-		14, 16,
-		19, 21,
-		24, 26, 28, 30, 32, 34,
-	} {
-		v, ok := xtob(b[x], b[x+1])
-		if !ok {
-			return uuid, ErrInvalidUUIDFormat
-		}
-		uuid[i] = v
-	}
-	return uuid, nil
+	return decodeHyphenated(b)
 }
 
 // MustParse is like Parse but panics if the string cannot be parsed.
@@ -215,10 +115,12 @@ func Must(uuid UUID, err error) UUID {
 }
 
 // Validate returns an error if s is not a properly formatted UUID in one of the following formats:
-//   xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-//   urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-//   xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-//   {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
+//
+//	xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+//	urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+//	xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//	{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
+//
 // It returns an error if the format is invalid, otherwise nil.
 func Validate(s string) error {
 	switch len(s) {
@@ -241,30 +143,15 @@ func Validate(s string) error {
 
 	// UUID without hyphens
 	case 32:
-		for i := 0; i < len(s); i += 2 {
-			_, ok := xtob(s[i], s[i+1])
-			if !ok {
-				return ErrInvalidUUIDFormat
-			}
-		}
+		_, err := decodeRawHex(s)
+		return err
 
 	default:
 		return invalidLengthError{len(s)}
 	}
 
-	// Check for standard UUID format
-	if len(s) == 36 {
-		if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
-			return ErrInvalidUUIDFormat
-		}
-		for _, x := range []int{0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34} {
-			if _, ok := xtob(s[x], s[x+1]); !ok {
-				return ErrInvalidUUIDFormat
-			}
-		}
-	}
-
-	return nil
+	_, err := decodeHyphenated(s)
+	return err
 }
 
 // String returns the string form of uuid, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
@@ -338,46 +225,14 @@ func (v Variant) String() string {
 	return fmt.Sprintf("BadVariant%d", int(v))
 }
 
-// SetRand sets the random number generator to r, which implements io.Reader.
-// If r.Read returns an error when the package requests random data then
-// a panic will be issued.
-//
-// Calling SetRand with nil sets the random number generator to the default
-// generator.
-func SetRand(r io.Reader) {
-	if r == nil {
-		rander = rand.Reader
-		return
-	}
-	rander = r
+// IsNil reports whether uuid is the Nil UUID (all zeros).
+func (uuid UUID) IsNil() bool {
+	return uuid == Nil
 }
 
-// EnableRandPool enables internal randomness pool used for Random
-// (Version 4) UUID generation. The pool contains random bytes read from
-// the random number generator on demand in batches. Enabling the pool
-// may improve the UUID generation throughput significantly.
-//
-// Since the pool is stored on the Go heap, this feature may be a bad fit
-// for security sensitive applications.
-//
-// Both EnableRandPool and DisableRandPool are not thread-safe and should
-// only be called when there is no possibility that New or any other
-// UUID Version 4 generation function will be called concurrently.
-func EnableRandPool() {
-	poolEnabled = true
-}
-
-// DisableRandPool disables the randomness pool if it was previously
-// enabled with EnableRandPool.
-//
-// Both EnableRandPool and DisableRandPool are not thread-safe and should
-// only be called when there is no possibility that New or any other
-// UUID Version 4 generation function will be called concurrently.
-func DisableRandPool() {
-	poolEnabled = false
-	defer poolMu.Unlock()
-	poolMu.Lock()
-	poolPos = randPoolSize
+// IsMax reports whether uuid is the Max UUID (all bits set).
+func (uuid UUID) IsMax() bool {
+	return uuid == Max
 }
 
 // UUIDs is a slice of UUID types.

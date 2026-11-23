@@ -212,3 +212,46 @@ func TestNullUUIDUnmarshalJSON(t *testing.T) {
 		t.Errorf("expected nil when unmarshalling null, got %s", err)
 	}
 }
+
+func TestNullUUIDTextRoundTrip(t *testing.T) {
+	for _, in := range []NullUUID{
+		{},
+		{UUID: MustParse("12345678-abcd-1234-abcd-0123456789ab"), Valid: true},
+	} {
+		text, err := in.MarshalText()
+		if err != nil {
+			t.Fatalf("MarshalText(%v): %v", in, err)
+		}
+		out := NullUUID{UUID: Max, Valid: true}
+		if err := out.UnmarshalText(text); err != nil {
+			t.Fatalf("UnmarshalText(%q): %v", text, err)
+		}
+		if out != in {
+			t.Errorf("round trip of %v through %q = %v", in, text, out)
+		}
+	}
+}
+
+func TestNullUUIDBinaryRoundTrip(t *testing.T) {
+	for _, in := range []NullUUID{
+		{},
+		{UUID: MustParse("12345678-abcd-1234-abcd-0123456789ab"), Valid: true},
+	} {
+		data, err := in.MarshalBinary()
+		if err != nil {
+			t.Fatalf("MarshalBinary(%v): %v", in, err)
+		}
+		out := NullUUID{UUID: Max, Valid: true}
+		if err := out.UnmarshalBinary(data); err != nil {
+			t.Fatalf("UnmarshalBinary(%x): %v", data, err)
+		}
+		if out != in {
+			t.Errorf("round trip of %v through %x = %v", in, data, out)
+		}
+	}
+
+	var nu NullUUID
+	if err := nu.UnmarshalBinary([]byte{1, 2, 3}); !IsInvalidLengthError(err) {
+		t.Errorf("UnmarshalBinary(3 bytes) error = %v, want an invalid length error", err)
+	}
+}
