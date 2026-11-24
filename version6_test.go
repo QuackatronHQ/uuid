@@ -1,6 +1,7 @@
 package uuid
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -64,6 +65,35 @@ func TestNewV6FromTimeGeneratesUniqueUUIDs(t *testing.T) {
 	if len(ids) != runs {
 		t.Errorf("got %d UUIDs, want %d", len(ids), runs)
 	}
+}
+
+// TestNewV6WithTimeConcurrent runs NewV6WithTime next to NewV6 so the race
+// detector catches unsynchronized access to the clock sequence.
+func TestNewV6WithTimeConcurrent(t *testing.T) {
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				now := time.Now()
+				if _, err := NewV6WithTime(&now); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				if _, err := NewV6(); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func BenchmarkNewV6WithTime(b *testing.B) {

@@ -23,26 +23,27 @@ const (
 // NewDCESecurity returns a DCE Security (Version 2) UUID.
 //
 // The domain should be one of Person, Group or Org.
-// On a POSIX system the id should be the users UID for the Person
-// domain and the users GID for the Group.  The meaning of id for
+// On a POSIX system the id should be the user's UID for the Person
+// domain and the user's GID for the Group.  The meaning of id for
 // the domain Org or on non-POSIX systems is site defined.
 //
 // For a given domain/id pair the same token may be returned for up to
 // 7 minutes and 10 seconds.
 func NewDCESecurity(domain Domain, id uint32) (UUID, error) {
 	uuid, err := NewUUID()
-	if err == nil {
-		uuid[6] = (uuid[6] & 0x0f) | 0x20 // Version 2
-		uuid[9] = byte(domain)
-		binary.BigEndian.PutUint32(uuid[0:], id)
+	if err != nil {
+		return Nil, err
 	}
-	return uuid, err
+	setVersion(&uuid, 2)
+	uuid[9] = byte(domain)
+	binary.BigEndian.PutUint32(uuid[0:], id)
+	return uuid, nil
 }
 
 // NewDCEPerson returns a DCE Security (Version 2) UUID in the person
 // domain with the id returned by os.Getuid.
 //
-//  NewDCESecurity(Person, uint32(os.Getuid()))
+//	NewDCESecurity(Person, uint32(os.Getuid()))
 func NewDCEPerson() (UUID, error) {
 	return NewDCESecurity(Person, uint32(os.Getuid()))
 }
@@ -50,7 +51,7 @@ func NewDCEPerson() (UUID, error) {
 // NewDCEGroup returns a DCE Security (Version 2) UUID in the group
 // domain with the id returned by os.Getgid.
 //
-//  NewDCESecurity(Group, uint32(os.Getgid()))
+//	NewDCESecurity(Group, uint32(os.Getgid()))
 func NewDCEGroup() (UUID, error) {
 	return NewDCESecurity(Group, uint32(os.Getgid()))
 }

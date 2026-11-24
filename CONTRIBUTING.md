@@ -9,6 +9,17 @@ Commits must be formatted according to the [Conventional Commits Specification](
 Always try to include a test case! If it is not possible or not necessary,
 please explain why in the pull request description.
 
+Before sending a pull request, run:
+
+```sh
+gofmt -l .
+go vet ./...
+go test -race ./...
+```
+
+The module supports Go 1.19 and later. Do not use language features or
+standard library APIs added after Go 1.19.
+
 ### Releasing
 
 Commits that would precipitate a SemVer change, as described in the Conventional

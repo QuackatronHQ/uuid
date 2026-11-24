@@ -12,7 +12,7 @@ import (
 // Scan implements sql.Scanner so UUIDs can be read from databases transparently.
 // Currently, database types that map to string and []byte are supported. Please
 // consult database-specific driver documentation for matching types.
-func (uuid *UUID) Scan(src interface{}) error {
+func (uuid *UUID) Scan(src any) error {
 	switch src := src.(type) {
 	case nil:
 		return nil
@@ -26,7 +26,7 @@ func (uuid *UUID) Scan(src interface{}) error {
 		// see Parse for required string format
 		u, err := Parse(src)
 		if err != nil {
-			return fmt.Errorf("Scan: %v", err)
+			return fmt.Errorf("Scan: %w", err)
 		}
 
 		*uuid = u

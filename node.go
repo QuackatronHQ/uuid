@@ -19,8 +19,8 @@ var (
 // derived.  The interface "user" is returned if the NodeID was set by
 // SetNodeID.
 func NodeInterface() string {
-	defer nodeMu.Unlock()
 	nodeMu.Lock()
+	defer nodeMu.Unlock()
 	return ifname
 }
 
@@ -31,8 +31,8 @@ func NodeInterface() string {
 //
 // SetNodeInterface never fails when name is "".
 func SetNodeInterface(name string) bool {
-	defer nodeMu.Unlock()
 	nodeMu.Lock()
+	defer nodeMu.Unlock()
 	return setNodeInterface(name)
 }
 
@@ -58,13 +58,20 @@ func setNodeInterface(name string) bool {
 // NodeID returns a slice of a copy of the current Node ID, setting the Node ID
 // if not already set.
 func NodeID() []byte {
-	defer nodeMu.Unlock()
+	var nid [6]byte
+	copyNodeID(nid[:])
+	return nid[:]
+}
+
+// copyNodeID copies the current Node ID into dst, setting the Node ID first
+// if it has not been set yet. It is used by the time based generators.
+func copyNodeID(dst []byte) {
 	nodeMu.Lock()
+	defer nodeMu.Unlock()
 	if nodeID == zeroID {
 		setNodeInterface("")
 	}
-	nid := nodeID
-	return nid[:]
+	copy(dst, nodeID[:])
 }
 
 // SetNodeID sets the Node ID to be used for Version 1 UUIDs.  The first 6 bytes
@@ -74,8 +81,8 @@ func SetNodeID(id []byte) bool {
 	if len(id) < 6 {
 		return false
 	}
-	defer nodeMu.Unlock()
 	nodeMu.Lock()
+	defer nodeMu.Unlock()
 	copy(nodeID[:], id)
 	ifname = "user"
 	return true

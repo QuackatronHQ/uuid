@@ -18,9 +18,9 @@ import (
 // NewV6 returns a Version 6 UUID based on the current NodeID and clock
 // sequence, and the current time. If the NodeID has not been set by SetNodeID
 // or SetNodeInterface then it will be set automatically. If the NodeID cannot
-// be set NewV6 set NodeID is random bits automatically . If clock sequence has not been set by
-// SetClockSequence then it will be set automatically. If GetTime fails to
-// return the current NewV6 returns Nil and an error.
+// be set, NewV6 uses random bits for the NodeID. If clock sequence has not been
+// set by SetClockSequence then it will be set automatically. If GetTime fails
+// to return the current time NewV6 returns Nil and an error.
 func NewV6() (UUID, error) {
 	now, seq, err := GetTime()
 	if err != nil {
@@ -36,8 +36,12 @@ func NewV6() (UUID, error) {
 // There is a limit on how many UUIDs can be generated for the same time, so if you
 // are generating multiple UUIDs, it is recommended to increment the time.
 // If getTime fails to return the current NewV6WithTime returns Nil and an error.
+//
+// NewV6WithTime is safe for concurrent use with NewV6, NewUUID and GetTime.
 func NewV6WithTime(customTime *time.Time) (UUID, error) {
+	timeMu.Lock()
 	now, seq, err := getTime(customTime)
+	timeMu.Unlock()
 	if err != nil {
 		return Nil, err
 	}
@@ -72,12 +76,7 @@ func generateV6(now Time, seq uint16) UUID {
 	binary.BigEndian.PutUint16(uuid[6:], timeLow)
 	binary.BigEndian.PutUint16(uuid[8:], seq)
 
-	nodeMu.Lock()
-	if nodeID == zeroID {
-		setNodeInterface("")
-	}
-	copy(uuid[10:], nodeID[:])
-	nodeMu.Unlock()
+	copyNodeID(uuid[10:])
 
 	return uuid
 }

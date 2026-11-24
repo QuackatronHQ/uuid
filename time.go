@@ -43,11 +43,12 @@ func (t Time) UnixTime() (sec, nsec int64) {
 // clock sequence as well as adjusting the clock sequence as needed.  An error
 // is returned if the current time cannot be determined.
 func GetTime() (Time, uint16, error) {
-	defer timeMu.Unlock()
 	timeMu.Lock()
+	defer timeMu.Unlock()
 	return getTime(nil)
 }
 
+// getTime is the lock free core of GetTime. The caller must hold timeMu.
 func getTime(customTime *time.Time) (Time, uint16, error) {
 	var t time.Time
 	if customTime == nil { // When not provided, use the current time
@@ -79,8 +80,8 @@ func getTime(customTime *time.Time) (Time, uint16, error) {
 // random clock sequence is generated the first time a clock sequence is
 // requested by ClockSequence, GetTime, or NewUUID.  (section 4.2.1.1)
 func ClockSequence() int {
-	defer timeMu.Unlock()
 	timeMu.Lock()
+	defer timeMu.Unlock()
 	return clockSequence()
 }
 
@@ -94,8 +95,8 @@ func clockSequence() int {
 // SetClockSequence sets the clock sequence to the lower 14 bits of seq.  Setting to
 // -1 causes a new sequence to be generated.
 func SetClockSequence(seq int) {
-	defer timeMu.Unlock()
 	timeMu.Lock()
+	defer timeMu.Unlock()
 	setClockSequence(seq)
 }
 
@@ -132,6 +133,23 @@ func (uuid UUID) Time() Time {
 		t = Time(time)
 	}
 	return t
+}
+
+// Timestamp returns the creation time encoded in uuid as a time.Time.
+// The second result is false for versions that carry no time (3, 4, 5 and 8)
+// and for UUIDs that are not of the RFC 9562 variant.
+//
+// Version 7 UUIDs only store milliseconds, so the result is truncated to the
+// millisecond.
+func (uuid UUID) Timestamp() (time.Time, bool) {
+	if uuid.Variant() != RFC4122 {
+		return time.Time{}, false
+	}
+	switch uuid.Version() {
+	case 1, 2, 6, 7:
+		return time.Unix(uuid.Time().UnixTime()), true
+	}
+	return time.Time{}, false
 }
 
 // ClockSequence returns the clock sequence encoded in uuid.

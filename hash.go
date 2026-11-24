@@ -37,15 +37,17 @@ func NewHash(h hash.Hash, space UUID, data []byte, version int) UUID {
 	s := h.Sum(nil)
 	var uuid UUID
 	copy(uuid[:], s)
-	uuid[6] = (uuid[6] & 0x0f) | uint8((version&0xf)<<4)
-	uuid[8] = (uuid[8] & 0x3f) | 0x80 // RFC 9562 variant
+	setVersion(&uuid, Version(version&0xf))
 	return uuid
 }
 
 // NewMD5 returns a new MD5 (Version 3) UUID based on the
 // supplied name space and data.  It is the same as calling:
 //
-//  NewHash(md5.New(), space, data, 3)
+//	NewHash(md5.New(), space, data, 3)
+//
+// RFC 9562 recommends Version 5 (NewSHA1) over Version 3 for new
+// applications.
 func NewMD5(space UUID, data []byte) UUID {
 	return NewHash(md5.New(), space, data, 3)
 }
@@ -53,7 +55,7 @@ func NewMD5(space UUID, data []byte) UUID {
 // NewSHA1 returns a new SHA1 (Version 5) UUID based on the
 // supplied name space and data.  It is the same as calling:
 //
-//  NewHash(sha1.New(), space, data, 5)
+//	NewHash(sha1.New(), space, data, 5)
 func NewSHA1(space UUID, data []byte) UUID {
 	return NewHash(sha1.New(), space, data, 5)
 }
